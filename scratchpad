@@ -1,0 +1,140 @@
+SOURCES
+
+> Implementations:
+
+https://github.com/EpicGames/UnrealEngine/blob/release/Engine/Source/Runtime/Core/Public/Math/Float16.h
+https://gist.github.com/rygorous/2156668
+
+> Learning material
+https://www.cprogramming.com/tutorial/floating_point/understanding_floating_point_representation.html
+https://www.youtube.com/watch?v=D-9SQMWo6kI
+https://www.youtube.com/watch?v=RuKkePyo9zk
+https://www.youtube.com/watch?v=PZRI1IfStY0
+
+> Tools:
+https://bit-calculator.com/bit-shift-calculator
+https://float.exposed/0x387fc000
+
+---------------------------------------
+
+EXAMPLE
+
+Float to Half Float (0.000030517578125)
+S|    E    |          M
+0 0111000 0 0000000 00000000 00000000
+                  0 00000 10 00000000
+                  S|  E  |     M
+
+
+float bias (f_bias): 127
+float exponent (f_exp): 112
+unbiased f_exp (u_f_exp): f_exp - f_bias => 112 - 127 = -15
+
+half float bias (hf_bias): 15
+half float exponent (hf_exp): u_f_exp + hf_bias => -15 + 15 = 0
+
+since hf_exp <= 0, this is an underflow
+
+Before assuming the value is too small, check if it's possible to represent it through mantissa only
+
+14 - hf_exp <= 24 (this will always result in something >= 14 because hf_exp <= 0)
+
+The number 14 is here because we want to move the implied 1 from the float mantissa (which is at the 24th position) into the correct place of the half float (10th position)
+
+By subtracting hf_exp from 14, we find which half float mantissa bit should be set in order to represent the provided float value. If the condition is false, it follows that hf_exp < -10 which represents too small a value for the half precision float.
+
+mantissa_shift: 14 - hf_exp => 14 - 0 = 14
+
+Hidden 1 bit for mantissa on float (would occupy last exponent bit)
+0x800000 = 1000 0000 0000 0000 0000 0000
+
+float mantissa (f_mant): last 23 bits from float (0 in this case)
+
+expected half float mantissa (e_hf_mant) with the explicit 1: f_mant | 0x800000 => 0 | 0x800000 = 0x800000
+
+Transform it into the expected half float mantissa by using previously calculated shift
+half float mantissa (hf_mant): e_hf_mant >> mantissa_shift => 0x800000 >> 14 = 10 0000 0000
+
+In this example, the float mantissa was 0 so the only thing shifted was the implied 1, which ended up as the first mantissa bit (the 10th bit)
+
+The final step is checking for rounding, which is the same as before, but with a shift of 13 instead of 14 (to account for the possible 1 bit that was shifted out of range?)
+
+rounding_check: e_hf_mant >> (mantissa_shift - 1) => 0x800000 >> (14 - 1) => 0x800000 >> 13 = 100 0000 0000
+
+and a check against 1, which, when true, means the mantissa should be increased by 1
+
+rouding_check & 1 => 100 0000 0000 & 1 = 0
+
+In this case, no rounding was required, but if it was, it would be only a matter of adding 1 to the raw bits and letting it overflow into the exponent bit if necessary
+
+
+FINAL VALUE:
+sign = 0
+exp = 0
+mant = 10 0000 0000
+
+0000 0010 0000 0000
+
+
+======================
+Float to Mini Float (0.0625)
+
+S|    E    |          M
+0 0111101 1 0000000 00000000 00000000
+                           0 000 0100
+                           S| E | M
+
+float bias (f_bias): 127
+float exponent (f_exp): 123
+unbiased f_exp (u_f_exp): f_exp - f_bias => 123 - 127 = -4
+
+mini float bias (mf_bias): 3
+mini float exponent (mf_exp): u_f_exp + mf_bias => -4 + 3 = -1
+
+mf_exp <= 0 => underflow
+
+to move the hidden float 1 bit to the correct mini float position (4th), it must be right shifted 20
+
+mantissa_shift: 20 - mf_exp => 20 - (-1) = 21 which is <= 24
+
+float mantissa (f_mant): last 23 bits from float (0 in this case)
+
+expected mini float mantissa (e_mf_mant): float mantissa | 0x80000 => 0 | 0x800000 = 0x800000
+
+mini float mantissa (mf_mant): e_mf_mant >> mantissa_shift => 0x800000 >> 21 = 0100
+
+rounding_check: e_mf_mant >> (mantissa_shift - 1) => 0x800000 >> (21 - 1) => 0x800000 >> 20 = 1000
+
+rounding_check & 1 => 1000 & 1 = 0
+
+No rounding
+
+FINAL VALUE:
+sign = 0
+exp = 0
+mant = 0100
+
+0000 0100
+
+When exponent bits are 0, we use (1 - bias) rather than -bias, so in this case we get 2^(1 - 3) = 2^(-2), which, when multiplied by the mantissa 2^(-2) yields 2^(-4) = 0.0625
+
+
+
+
+======================
+Float to Mini Float (0.5)
+S|    E     |            M
+0 011 1111 0 000 0000 0000 0000 0000 0000
+                               0 010 0000 => 2^(2 - 3) * 2^0 => 2^(-1) * 1 = 1/2
+                               S| E | M
+
+float bias (f_bias): 127
+float exponent (f_exp): 126
+unbiased f_exp (u_f_exp): f_exp - f_bias => 126 - 127 = -1
+
+mini float bias (mf_bias): 3
+mini float exponent (mf_exp): u_f_exp + mf_bias => -1 + 3 = 2
+
+mf_exp > 0 => regular exp
+
+

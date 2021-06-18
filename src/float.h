@@ -6,11 +6,6 @@
 #include <cmath>
 #include <cstring>
 
-// RELEVANT LINKS
-// https://bit-calculator.com/bit-shift-calculator
-// https://float.exposed/0x387fc000
-// https://www.cprogramming.com/tutorial/floating_point/understanding_floating_point_representation.html
-// https://github.com/EpicGames/UnrealEngine/blob/release/Engine/Source/Runtime/Core/Public/Math/Float16.h
 namespace Math
 {
     using uint = unsigned int;
@@ -42,163 +37,182 @@ namespace Math
 
             MiniFloat(uchar bits) : bits(bits)
             {
-                log_v("{MiniFloat(float)} Creating MiniFloat from bit pattern (" << GetBitString(bits) << ")");
+                log_v("Creating MiniFloat from bit pattern (" << GetBitString(bits) << ")");
             }
 
             MiniFloat(float value) : MiniFloat()
             {
-                // TODO: Review implementation based on Unreal's FFloat16
-                log_v("{MiniFloat(float)} Creating MiniFloat from float (" << value << ")");
-                // Easy return
-                if(value == 0.0f)
-                {
-                    log_v("{MiniFloat(float)} MiniFloat with value of 0 created");
-                    return;
-                }
+
+                log_v("Creating MiniFloat from float (" << value << ")");
 
                 // Read bits from float
                 uint floatBits;
                 std::memcpy(&floatBits, &value, sizeof(float));
 
-                log_v("{MiniFloat(float)} float (" << value << ") bits = " << GetBitString(floatBits));
+                log_v("float (" << value << ") bits = " << GetBitString(floatBits));
 
                 // Extract sign bit from float
                 const uint floatSign = floatBits & floatSignMask;
-                log_v("{MiniFloat(float)} float sign bit = " << (floatSign ? "1" : "0"));
+                log_v("float sign bit = " << (floatSign ? "1" : "0"));
 
                 // Move float sign bit to correct position in mini float (8th) and copy it
                 const uchar miniFloatSign = floatSign >> 24;
                 bits |= miniFloatSign;
-                log_v("{MiniFloat(float)} MiniFloat sign bit = " << (miniFloatSign ? "1" : "0"));
+                log_v("MiniFloat sign bit = " << (miniFloatSign ? "1" : "0"));
 
                 const uint maskedFloatExponent = floatBits & floatExponentMask;
-                const uint shiftedFloatExponent = maskedFloatExponent >> 23;
-                const int unbiasedFloatExponent = shiftedFloatExponent - floatBias;
 
-                log_v("{MiniFloat(float)} float masked exponent = " << GetBitString(maskedFloatExponent));
-                log_v("{MiniFloat(float)} float exponent = " << shiftedFloatExponent << " (" << GetBitString(shiftedFloatExponent, true) << ")");
-                log_v("{MiniFloat(float)} float unbiased exponent = " << unbiasedFloatExponent);
+                log_v("float masked exponent = " << GetBitString(maskedFloatExponent));
+
+                const uint shiftedFloatExponent = maskedFloatExponent >> 23;
+                const int unbiasedFloatExponent = (maskedFloatExponent ? shiftedFloatExponent : 1) - floatBias; // denormal float exponent = -126
+                log_v("float exponent = " << shiftedFloatExponent << " (" << GetBitString(shiftedFloatExponent, true) << ")");
+                log_v("float unbiased exponent = " << unbiasedFloatExponent);
 
                 const uint floatMantissa = floatBits & floatMantissaMask;
 
-                // Check if exponent is too small
-                if (shiftedFloatExponent <= 0 + floatBias - bias) // 0 + 127 - 3 = 124
+                if (!maskedFloatExponent)
                 {
-                    log_v("{MiniFloat(float)} Unbiased float exponent is too small for mini float");
-                    const int NewExp = unbiasedFloatExponent + bias;
-                    log_v("{MiniFloat(float)} expectedMiniFloatExponent = " << NewExp);
-
-                    // Check if mini mantissa should be non-zero
-                    if (bias - 1 - NewExp <= 24)
-                    {
-                        // still not 100% sure about this line - how is it accounting for the "hidden 1 bit"?
-                        const uint hiddenOneFloatMantissa = floatMantissa | 0x800000;
-                        const uint mantissaShift = 24 - 4 - NewExp; // float mantissa bits - mini float mantissa bits + 1
-                        log_v("{MiniFloat(float)} hiddenOneFloatMantissa mantissa = " << hiddenOneFloatMantissa << " (" << GetBitString(hiddenOneFloatMantissa) << ")");
-                        bits |= (uchar)(hiddenOneFloatMantissa >> mantissaShift);
-                        const uint shiftedFloatMantissa = (hiddenOneFloatMantissa >> (23 - 4 - NewExp));
-                        log_v("{MiniFloat(float)} shiftedFloatMantissa = " << GetBitString(shiftedFloatMantissa));
-                        if (shiftedFloatMantissa & 1)
-                        {
-                            log_v("{MiniFloat(float)} Adding 1 to bits (round)");
-                            ++bits;
-                        }
-                    }
+                    log_v("Float denormalized. Too small for MiniFloat - assuming 0");
                 }
-                else if (unbiasedFloatExponent + bias >= 7) // Check if exponent too large
+                else if (maskedFloatExponent == floatExponentMask)
                 {
-                    log_v("{MiniFloat(float)} Unbiased float exponent is too big for mini float");
-                    // Infinity
+                    log_v("Float is infinity or NaN");
                     bits |= miniFloatExponentBitmask;
-                    // NaN float
-                    if (unbiasedFloatExponent == 255 && floatMantissa)
+                    if (floatMantissa)
                     {
-                        log_v("{MiniFloat(float)} NaN float detected");
-                        bits |= miniFloatMantissaBitmask;
+                        // Make mini-float NaN
+                        ++bits;
                     }
                 }
                 else
                 {
-                    const uchar miniExponent = (unbiasedFloatExponent + bias) << 4; // move exponent into proper mini float position
-                    const uchar miniMantissa = floatMantissa >> (23 - 4); // only get 4 most relevant mantissa bits
-                    log_v("{MiniFloat(float)} MiniFloat exponent = " << (uint) miniExponent << " (" << GetBitString(miniExponent) << ")");
-                    log_v("{MiniFloat(float)} MiniFloat mantissa = " << (uint) miniMantissa << " (" << GetBitString(miniMantissa) << ")");
-                    bits |= miniExponent | miniMantissa;
+                    log_v("Float normalized");
+
+                    const char expectedMiniExponent = (unbiasedFloatExponent + bias);
+                    log_v("Expected MiniFloat exponent = " << (int) expectedMiniExponent);
+                    if (expectedMiniExponent >= 8)
+                    {
+                        log_v("Overflow detected: Float exponent is too big. Assuming largest value possible.");
+                        bits |= (miniFloatExponentBitmask >> 5) << 5; // ignore lowest exp bit so mini float doesn't become infinity.
+                        bits |= miniFloatMantissaBitmask;
+                    }
+                    else if (expectedMiniExponent <= 0)
+                    {
+                        log_v("Underflow detected: Float exponent is too small");
+                        const uint mantissaShift = 20 - expectedMiniExponent;
+                        if (mantissaShift <= 24)
+                        {
+                            log_v("Possible non-zero mantissa detected.");
+                            const uint mantissaWithExplicitOne = floatMantissa | 0x800000;
+                            const uchar miniMantissa = mantissaWithExplicitOne >> mantissaShift;
+                            bits |= miniMantissa;
+                            if ((mantissaWithExplicitOne >> (mantissaShift - 1)) & 1)
+                            {
+                                log_v("Rounding mini float up");
+                                ++bits;
+                            }
+
+                        }
+                    }
+                    else
+                    {
+                        const uchar miniMantissa = floatMantissa >> (23 - 4); // only get 4 most relevant mantissa bits
+                        const uchar miniExponent = expectedMiniExponent << 4;
+                        log_v("MiniFloat mantissa = " << (uint) miniMantissa << " (" << GetBitString(miniMantissa) << ")");
+                        log_v("MiniFloat exponent = " << (uint) miniExponent << " (" << GetBitString(miniExponent) << ")");
+                        bits |= miniExponent | miniMantissa;
+                        // 100 0000 0000 0000 0000
+                        // Rounding check - seems unecessary
+                        if (floatMantissa & 0x40000)
+                        {
+                            log_v("Rounding mini float up");
+                            ++bits;
+                        }
+                    }
                 }
 
-                log_v("{MiniFloat(float)} MiniFloat = " << (uint)bits << " (" << GetBitString(bits) << ")");
+                log_v("MiniFloat = " << (uint)bits << " (" << GetBitString(bits) << ")");
             }
 
             float ToFloat() const
             {
-                log_v("{ToFloat()} Converting MiniFloat " << GetBitString(bits) << " to float");
-                // Easy return
-                if(bits == 0)
-                {
-                    log_v("{ToFloat()} MiniFloat is zero (0)");
-                    return 0.0f;
-                }
+                log_v("Converting MiniFloat " << GetBitString(bits) << " to float");
+
                 // Create 32 bits mask
                 uint floatBits = 0;
 
                 const uchar miniSign = GetSign();
                 const uchar miniExponent = GetExponent();
                 const uchar miniMantissa = GetMantissa();
-                log_v("{ToFloat()} MiniFloat masked sign bit = " << GetBitString(miniSign));
-                log_v("{ToFloat()} MiniFloat masked exponent = " << GetBitString(miniExponent));
-                log_v("{ToFloat()} MiniFloat masked mantissa = " << GetBitString(miniMantissa));
+                log_v("MiniFloat masked sign bit = " << GetBitString(miniSign));
+                log_v("MiniFloat masked exponent = " << GetBitString(miniExponent));
+                log_v("MiniFloat masked mantissa = " << GetBitString(miniMantissa));
 
                 const uint floatSign = miniSign << 24;
-                log_v("{ToFloat()} float masked sign bit = " << GetBitString(floatSign));
+                log_v("float masked sign bit = " << GetBitString(floatSign));
                 // Copy sign bit
                 floatBits |= floatSign;
 
-                if (miniExponent == 0) // Denormalized
+                if (miniExponent == 0) // Denormal
                 {
-                    log_v("{ToFloat()} MiniFloat is denormalized");
-                    if (miniMantissa != 0) // if false, then it's zero
+                    log_v("MiniFloat is denormal");
+                    if (miniMantissa != 0)
                     {
-                        float mantissaAsFloat = 0.f;
-                        std::memcpy(&mantissaAsFloat, &miniMantissa, sizeof(float));
-                        // Up to 4 bits for mantissa
-                        const uint mantissaShift = 4 - (int)std::log2(mantissaAsFloat);
-                        const uint floatExponent = floatBias - (bias - 1) - mantissaShift;
-                        const uint floatMantissa = miniMantissa << (mantissaShift + 23 - 4); // 23 for float, 4 for MiniFloat
-                        floatBits |= (floatExponent << 23) | floatMantissa;
-                    }
+                        // Try to extract float exponent from mini float mantissa
+                        int e = -1;
+                        uint m = miniMantissa;
+                        do
+                        {
+                            ++e;
+                            m <<= 1;
+                        } while ((m & 0b10000) == 0); // while we haven't reached the first mini mantissa exponent bit
+
+                        const uint floatMantissa = (m & miniFloatMantissaBitmask) << 19; // Extract actual mantissa and shift it in place
+                        const uint floatExponent = (floatBias - bias - e) << 23;
+                        log_v("Float mantissa = " << GetBitString(floatMantissa));
+                        log_v("Float exponent = " << GetBitString(floatExponent));
+
+                        floatBits |= floatMantissa;
+                        floatBits |= floatExponent;         // Calculate exponent and shift it as well
+
+                    } // else, mini float is zero
                 }
-                else if (miniExponent == miniFloatExponentBitmask) // infinity or NaN
+                else
                 {
-                    // set float to largest MiniFloat -> 15
-                    floatBits |= floatExponentMask;
-                    floatBits |= miniMantissa;
-                }
-                else // Normalized
-                {
-                    // Shift bits right, so it's easier to calculate things
-                    const uchar shiftedMiniExponent = miniExponent >> 4;
-                    log_v("{ToFloat()} MiniFloat exponent = " << (uint)shiftedMiniExponent << " (" << GetBitString(shiftedMiniExponent, true) << ")");
-
-                    // Subtract bias (may be negative, so result must be signed)
-                    const char biasedMiniExponent = shiftedMiniExponent - bias;
-                    log_v("{ToFloat()} MiniFloat biased exponent = " << (int)biasedMiniExponent);
-
-                    // Since regular float bias > mini float bias, result will always be > 0 so it can be unsigned
-                    const uint floatExponent = biasedMiniExponent + floatBias;
-                    log_v("{ToFloat()} float exponent = " << floatExponent << " (" << GetBitString(floatExponent, true) << ")");
-
-                    // move exponent to correct place in regular float
-                    floatBits |= floatExponent << 23;
-                    // mantissa can be copied directly, just shift it to the correct place
+                    // mantissa can be copied directly, just shift it to the correct place (works for NaN as well)
                     const uint floatMantissa = miniMantissa << 19;
-                    log_v("{ToFloat()} float mantissa = " << floatMantissa << " (" << GetBitString(floatMantissa) << ")");
+                    log_v("float mantissa = " << floatMantissa << " (" << GetBitString(floatMantissa) << ")");
                     floatBits |= floatMantissa;
+
+                    if (miniExponent == miniFloatExponentBitmask) // Infinity or NaN
+                    {
+                        // Set all float exponent bits
+                        floatBits |= floatExponentMask;
+                    }
+                    else // Normalized
+                    {
+                        // Shift bits right, so it's easier to calculate things
+                        const uchar shiftedMiniExponent = miniExponent >> 4;
+                        log_v("MiniFloat exponent = " << (uint)shiftedMiniExponent << " (" << GetBitString(shiftedMiniExponent, true) << ")");
+
+                        // Subtract bias (may be negative, so result must be signed)
+                        const char unbiasedMiniExponent = shiftedMiniExponent - bias;
+                        log_v("MiniFloat biased exponent = " << (int)unbiasedMiniExponent);
+
+                        // Since regular float bias > mini float bias, result will always be > 0 so it can be unsigned
+                        const uint floatExponent = unbiasedMiniExponent + floatBias;
+                        log_v("float exponent = " << floatExponent << " (" << GetBitString(floatExponent, true) << ")");
+
+                        // move exponent to correct place in regular float
+                        floatBits |= floatExponent << 23;
+                    }
                 }
 
                 // Copy bits into actual float
                 float result;
                 std::memcpy(&result, &floatBits, sizeof(float));
-                log_v("{ToFloat()} reconstructed float = " << result << " (" << GetBitString(floatBits) << ")");
+                log_v("reconstructed float = " << result << " (" << GetBitString(floatBits) << ")");
                 return result;
             }
 
