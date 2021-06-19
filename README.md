@@ -39,9 +39,9 @@ This allows you to see the binary representation of different floats and see how
 
 ---------------------------------------
 
-# EXAMPLE
+# Examples
 
-## Converting Float to Half (0.000030517578125)
+## Float to Half (0.000030517578125)
 
 ```
 S|    E    |          M
@@ -70,7 +70,7 @@ Since `hf_exp <= 0`, this is an **underflow**, but before assuming the value is 
 
 This will **always** result in something >= 14 because `hf_exp <= 0`.
 
-The number 14 comes from the fact we want to move the implied 1 from the float mantissa (which is at the 24th position) into the first mantissa bit from the half float (10th position) when `hf_exps = 0`.
+The number 14 comes from the fact we want to move the implied 1 from the float mantissa (which is at the 24th position) into the first mantissa bit from the half float (10th position) when `hf_exp = 0`.
 
 ```
 Hidden 1 bit for mantissa on float (would occupy first exponent bit)
@@ -110,13 +110,15 @@ rounding_check & 1 => 100 0000 0000 & 1 = 0
 
 In this case, no rounding was required, but if it was, it would be only a matter of adding 1 to the raw bits and letting it overflow into the exponent bit if necessary
 
-**FINAL VALUE:**
+**RESULT**
+```
 sign = 0
 exp = 0
 mant = 10 0000 0000
+```
 
 ======================
-## Converting Float to Mini Float (0.0625)
+## Float to Mini Float (0.0625)
 
 ```
 S|    E    |          M
@@ -159,11 +161,13 @@ rounding_check & 1 => 1000 & 1 = 0
 
 Again, no rounding was required.
 
-FINAL VALUE:
+**RESULT**
+```
 sign = 0
 exp = 0
 mant = 0100
+```
 
-When exponent bits are 0, we use (1 - bias) rather than -bias, so in this case we get 2^(1 - 3) = 2^(-2), which, when multiplied by the mantissa 2^(-2) yields 2^(-4) = 0.0625
+_obs: When exponent bits are 0, we use (1 - bias) rather than -bias, so in this case we get 2^(1 - 3) = 2^(-2), which, when multiplied by the mantissa 2^(-2) yields 2^(-4) = 0.0625_
 
 
